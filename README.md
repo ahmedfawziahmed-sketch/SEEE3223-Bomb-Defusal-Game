@@ -1,2 +1,2 @@
 # Bomb-Defusal-Game
-Group assignment for Microprocessor  using STM32 Blue Pill in C Language.
+Group assignment for  Microprocessors  course using STM32 Blue Pill in C Language.
