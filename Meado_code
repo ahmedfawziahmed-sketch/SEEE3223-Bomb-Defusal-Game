@@ -1,0 +1,60 @@
+#include "stm32f10x.h"
+
+void Keypad_Init(void) {
+    RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_IOPBEN | RCC_APB2ENR_IOPCEN;
+    
+    // Configure PA2, PA3, PA4, PA5 (Rows 1-4) as Output Push-Pull (2MHz)
+    GPIOA->CRL &= ~(0x0FFFFF00);
+    GPIOA->CRL |=  (0x02222200);
+    
+    // Configure PA6, PA7 (Cols 1-2) as Input Pull-Up
+    GPIOA->CRL &= ~(0xFF000000);
+    GPIOA->CRL |=  (0x88000000);
+    GPIOA->ODR |=  (0xC0); 
+    
+    // Configure PB0, PB1 (Cols 3-4) as Input Pull-Up
+    GPIOB->CRL &= ~(0x000000FF);
+    GPIOB->CRL |=  (0x00000088);
+    GPIOB->ODR |=  (0x03); 
+    
+    // Configure PC13 (Input Feedback Buzzer 2) as Output Push-Pull (2MHz)
+    GPIOC->CRH &= ~(0xF << 20);
+    GPIOC->CRH |=  (0x2 << 20);
+}
+
+void Keypad_DebounceDelay(void) {
+    for (volatile int i = 0; i < 8000; i++); 
+}
+
+char Keypad_Scan(void) {
+    char keys[4][4] = {
+        {'1','2','3','A'},
+        {'4','5','6','B'},
+        {'7','8','9','C'},
+        {'*','0','#','D'}
+    };
+    
+    for (int r = 0; r < 4; r++) {
+        GPIOA->ODR |= (0x3C); 
+        GPIOA->ODR &= ~(1 << (r + 2)); 
+        
+        // Helper block checking column inputs and driving the keypress chime
+        if (!(GPIOA->IDR & GPIO_IDR_IDR6)) { 
+            GPIOC->ODR |= (1 << 13); Keypad_DebounceDelay(); GPIOC->ODR &= ~(1 << 13); // Pulse Buzzer 2
+            while(!(GPIOA->IDR & GPIO_IDR_IDR6)); return keys[r][0]; 
+        }
+        if (!(GPIOA->IDR & GPIO_IDR_IDR7)) { 
+            GPIOC->ODR |= (1 << 13); Keypad_DebounceDelay(); GPIOC->ODR &= ~(1 << 13); // Pulse Buzzer 2
+            while(!(GPIOA->IDR & GPIO_IDR_IDR7)); return keys[r][1]; 
+        }
+        if (!(GPIOB->IDR & GPIO_IDR_IDR0)) { 
+            GPIOC->ODR |= (1 << 13); Keypad_DebounceDelay(); GPIOC->ODR &= ~(1 << 13); // Pulse Buzzer 2
+            while(!(GPIOB->IDR & GPIO_IDR_IDR0)); return keys[r][2]; 
+        }
+        if (!(GPIOB->IDR & GPIO_IDR_IDR1)) { 
+            GPIOC->ODR |= (1 << 13); Keypad_DebounceDelay(); GPIOC->ODR &= ~(1 << 13); // Pulse Buzzer 2
+            while(!(GPIOB->IDR & GPIO_IDR_IDR1)); return keys[r][3]; 
+        }
+    }
+    return 0; 
+}
