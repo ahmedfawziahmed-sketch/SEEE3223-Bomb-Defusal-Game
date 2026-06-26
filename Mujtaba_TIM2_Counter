@@ -1,0 +1,132 @@
+#include "stm32f10x.h"
+
+volatile int seconds_left = 60; 
+volatile int game_over = 0;
+
+const uint8_t segment_map[] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
+
+void TM1637_Delay(void) {
+    for (volatile int i = 0; i < 50; i++);
+}
+
+void TM1637_Start(void) {
+    GPIOA->ODR |= GPIO_ODR_ODR1;  
+    GPIOA->ODR |= GPIO_ODR_ODR0;  
+    TM1637_Delay();
+    GPIOA->ODR &= ~GPIO_ODR_ODR1; 
+    TM1637_Delay();
+    GPIOA->ODR &= ~GPIO_ODR_ODR0; 
+}
+
+void TM1637_Stop(void) {
+    GPIOA->ODR &= ~GPIO_ODR_ODR0; 
+    GPIOA->ODR &= ~GPIO_ODR_ODR1; 
+    TM1637_Delay();
+    GPIOA->ODR |= GPIO_ODR_ODR0;  
+    TM1637_Delay();
+    GPIOA->ODR |= GPIO_ODR_ODR1;  
+}
+
+void TM1637_WriteByte(uint8_t data) {
+    for (uint8_t i = 0; i < 8; i++) {
+        GPIOA->ODR &= ~GPIO_ODR_ODR0; 
+        if (data & 0x01) {
+            GPIOA->ODR |= GPIO_ODR_ODR1; 
+        } else {
+            GPIOA->ODR &= ~GPIO_ODR_ODR1; 
+        }
+        data >>= 1;
+        TM1637_Delay();
+        GPIOA->ODR |= GPIO_ODR_ODR0; 
+        TM1637_Delay();
+    }
+    GPIOA->ODR &= ~GPIO_ODR_ODR0;
+    TM1637_Delay();
+    GPIOA->ODR |= GPIO_ODR_ODR0;
+    TM1637_Delay();
+    GPIOA->ODR &= ~GPIO_ODR_ODR0;
+}
+
+void TM1637_Init(void) {
+    RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_IOPBEN; 
+    
+    // Configure PA0 (CLK) and PA1 (DIO) as Output Open-Drain (2MHz)
+    GPIOA->CRL &= ~(0xFF << 0); 
+    GPIOA->CRL |= (0x06 << 0) | (0x06 << 4); 
+    
+    // Configure PB5 (Buzzer 1) as Output Push-Pull (2MHz)
+    GPIOB->CRL &= ~(0xF << 20);
+    GPIOB->CRL |=  (0x2 << 20);
+    
+    // Configure PB8, PB9, PB10, PB11 (4 Red LEDs) as Output Push-Pull (2MHz)
+    GPIOB->CRH &= ~(0x0000FFFF);
+    GPIOB->CRH |=  (0x00002222);
+}
+
+void TM1637_DisplayTime(int seconds) {
+    int mins = seconds / 60;
+    int secs = seconds % 60;
+    
+    TM1637_Start();
+    TM1637_WriteByte(0x40); 
+    TM1637_Stop();
+    
+    TM1637_Start();
+    TM1637_WriteByte(0xC0); 
+    TM1637_WriteByte(segment_map[mins / 10]);
+    TM1637_WriteByte(segment_map[mins % 10] | 0x80); 
+    TM1637_WriteByte(segment_map[secs / 10]);
+    TM1637_WriteByte(segment_map[secs % 10]);
+    TM1637_Stop();
+}
+
+void Timer2_Init(void) {
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN; 
+    TIM2->PSC = 7999;                   // 8MHz clock down to 1kHz ticks
+    TIM2->ARR = 99;                     // Interrupt triggers every 100ms (10 Ticks = 1 Second)
+    TIM2->DIER |= TIM_DIER_UIE;         
+    NVIC_EnableIRQ(TIM2_IRQn);          
+    TIM2->CR1 |= TIM_CR1_CEN;           
+}
+
+// System Hardware Interrupt: Runs every 100ms to generate dynamic audio-visual feedback
+void TIM2_IRQHandler(void) {
+    static int tick_count = 0;
+    
+    if (TIM2->SR & TIM_SR_UIF) {        
+        TIM2->SR &= ~TIM_SR_UIF;        
+        
+        if (seconds_left > 0 && !game_over) {
+            tick_count++;
+            if (tick_count >= 10) {     // 10 ticks of 100ms = 1 full second passed
+                tick_count = 0;
+                seconds_left--;
+            }
+            
+            // DYNAMIC ALERT PACING SYSTEM
+            if (seconds_left > 10) {
+                // Normal Mode: Peep and Flash slowly (ON during first 200ms of every second)
+                if (tick_count < 2) {
+                    GPIOB->ODR |= (0xF << 8);  // Turn 4 Red LEDs ON
+                    GPIOB->ODR |= (1 << 5);    // Turn Countdown Buzzer ON
+                } else {
+                    GPIOB->ODR &= ~(0xF << 8); // Red LEDs OFF
+                    GPIOB->ODR &= ~(1 << 5);   // Countdown Buzzer OFF
+                }
+            } else {
+                // Intense Mode: Time <= 10s. Peep and Flash quickly (Toggle every 200ms)
+                if ((tick_count % 4) < 2) {
+                    GPIOB->ODR |= (0xF << 8);  // Red LEDs ON
+                    GPIOB->ODR |= (1 << 5);    // Countdown Buzzer ON
+                } else {
+                    GPIOB->ODR &= ~(0xF << 8); // Red LEDs OFF
+                    GPIOB->ODR &= ~(1 << 5);   // Countdown Buzzer OFF
+                }
+            }
+        } else if (seconds_left <= 0) {
+            game_over = 2;              // Trigger timeout state
+            GPIOB->ODR &= ~(0xF << 8); // Clear red pins
+            GPIOB->ODR &= ~(1 << 5);   // Clear alarm buzzer
+        }
+    }
+}
